@@ -1,14 +1,16 @@
 {
   "name": "user-api",
   "version": "1.0.0",
-  "description": "Oddiy User CRUD API (in-memory, database yo'q)",
+  "description": "User CRUD API + JWT Auth (register/login/refresh) (in-memory, database yo'q)",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2"
   }
 }
