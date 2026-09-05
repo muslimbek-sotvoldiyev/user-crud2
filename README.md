@@ -54,7 +54,14 @@ PORT=3000
 | PUT    | /products/:id | Productni yangilash         |
 | DELETE | /products/:id | Productni o'chirish         |
 
-Product maydonlari: `name` (majburiy), `price` (majburiy, son), `description` (ixtiyoriy), `quantity` (ixtiyoriy, son, default 0).
+Product maydonlari: `name` (majburiy), `price` (majburiy, son), `description` (ixtiyoriy), `quantity` (ixtiyoriy, son, default 0), `image` (ixtiyoriy, rasm fayl).
+
+### Rasm yuklash
+
+- `POST /products` va `PUT /products/:id` endpointlari endi `multipart/form-data` so'rovlarini ham qabul qiladi — `image` maydoniga rasm fayl (jpeg, png, gif yoki webp, maksimal 5MB) biriktirish mumkin.
+- Yuklangan rasmlar `uploads/` papkasida saqlanadi va `/uploads/<fayl-nomi>` orqali ochiladi. Har bir product javobida to'liq `imageUrl` qaytariladi (rasm bo'lmasa `null`).
+- `DELETE /products/:id/image` — faqat productning rasmini o'chiradi (productning o'zi qoladi).
+- Product o'chirilganda (`DELETE /products/:id`), unga tegishli rasm fayli ham diskdan o'chiriladi.
 
 ## Misollar
 
@@ -147,6 +154,33 @@ curl -X POST http://localhost:3000/products \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <accessToken>" \
   -d '{"name":"Noutbuk","price":1200,"description":"15 dyum","quantity":5}'
+```
+
+### Yangi product qo'shish (rasm bilan)
+
+```bash
+curl -X POST http://localhost:3000/products \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "name=Noutbuk" \
+  -F "price=1200" \
+  -F "description=15 dyum" \
+  -F "quantity=5" \
+  -F "image=@/path/to/rasm.jpg"
+```
+
+### Product rasmini yangilash
+
+```bash
+curl -X PUT http://localhost:3000/products/1 \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "image=@/path/to/yangi-rasm.jpg"
+```
+
+### Product rasmini o'chirish
+
+```bash
+curl -X DELETE http://localhost:3000/products/1/image \
+  -H "Authorization: Bearer <accessToken>"
 ```
 
 ### Barcha productlarni olish

@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const {
   generateAccessToken,
@@ -19,6 +22,55 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// ===== Rasm yuklash sozlamalari (product uchun) =====
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR);
+}
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Faqat rasm fayllari (jpeg, png, gif, webp) yuklash mumkin"));
+    }
+  },
+});
+
+// Yuklangan rasmlarni statik fayl sifatida ochish: /uploads/<fayl-nomi>
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+// ===== Yordamchi: diskdan rasm faylini o'chirish =====
+function deleteImageFile(filename) {
+  if (!filename) return;
+  const filePath = path.join(UPLOAD_DIR, filename);
+  fs.unlink(filePath, () => {}); // xato bo'lsa ham e'tiborsiz qoldiramiz
+}
+
+// ===== Yordamchi: productga to'liq imageUrl qo'shib qaytarish =====
+function toPublicProduct(product, req) {
+  return {
+    ...product,
+    imageUrl: product.image
+      ? `${req.protocol}://${req.get("host")}/uploads/${product.image}`
+      : null,
+  };
+}
 
 // ===== Ma'lumotlar shu yerda saqlanadi (oddiy massiv, database yo'q) =====
 let users = [];
@@ -349,11 +401,16 @@ app.delete("/users/:id", authenticateToken, (req, res) => {
 // Quyidagi barcha /products route'lari access token talab qiladi.
 // So'rov headerida: Authorization: Bearer <accessToken>
 
-// ===== CREATE - Yangi product qo'shish =====
-app.post("/products", authenticateToken, (req, res) => {
+// ===== CREATE - Yangi product qo'shish (ixtiyoriy rasm bilan, form-data: image) =====
+app.post("/products", authenticateToken, upload.single("image"), (req, res) => {
+  // multer form-data maydonlarini string qilib beradi, price/quantity'ni songa o'giramiz
+  if (req.body.price !== undefined) req.body.price = Number(req.body.price);
+  if (req.body.quantity !== undefined) req.body.quantity = Number(req.body.quantity);
+
   const error = validateProductInput(req.body);
 
   if (error) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(400).json({ error });
   }
 
@@ -364,7 +421,8 @@ app.post("/products", authenticateToken, (req, res) => {
     name,
     price,
     description: description || "",
-    quantity: typeof quantity === "number" ? quantity : 0,
+    quantity: typeof quantity === "number" && !Number.isNaN(quantity) ? quantity : 0,
+    image: req.file ? req.file.filename : null,
     createdBy: req.user.id,
     createdAt: new Date().toISOString(),
   };
@@ -373,13 +431,13 @@ app.post("/products", authenticateToken, (req, res) => {
 
   res.status(201).json({
     message: "Product muvaffaqiyatli qo'shildi",
-    product: newProduct,
+    product: toPublicProduct(newProduct, req),
   });
 });
 
 // ===== READ - Barcha productlarni olish =====
 app.get("/products", authenticateToken, (req, res) => {
-  res.status(200).json(products);
+  res.status(200).json(products.map((product) => toPublicProduct(product, req)));
 });
 
 // ===== READ - Bitta productni olish =====
@@ -394,11 +452,68 @@ app.get("/products/:id", authenticateToken, (req, res) => {
     });
   }
 
-  res.status(200).json(product);
+  res.status(200).json(toPublicProduct(product, req));
 });
 
-// ===== UPDATE - Productni yangilash =====
-app.put("/products/:id", authenticateToken, (req, res) => {
+// ===== UPDATE - Productni yangilash (ixtiyoriy yangi rasm bilan, form-data: image) =====
+app.put("/products/:id", authenticateToken, upload.single("image"), (req, res) => {
+  const id = Number(req.params.id);
+
+  const product = products.find((product) => product.id === id);
+
+  if (!product) {
+    if (req.file) deleteImageFile(req.file.filename);
+    return res.status(404).json({
+      error: "Product topilmadi",
+    });
+  }
+
+  if (req.body.price !== undefined) req.body.price = Number(req.body.price);
+  if (req.body.quantity !== undefined) req.body.quantity = Number(req.body.quantity);
+
+  const { name, price, description, quantity } = req.body;
+
+  if (name !== undefined) {
+    if (typeof name !== "string" || !name) {
+      if (req.file) deleteImageFile(req.file.filename);
+      return res.status(400).json({ error: "name string bo'lishi kerak" });
+    }
+    product.name = name;
+  }
+
+  if (price !== undefined) {
+    if (typeof price !== "number" || Number.isNaN(price) || price < 0) {
+      if (req.file) deleteImageFile(req.file.filename);
+      return res.status(400).json({ error: "price manfiy bo'lmagan son bo'lishi kerak" });
+    }
+    product.price = price;
+  }
+
+  if (description !== undefined) product.description = description;
+  if (quantity !== undefined) {
+    if (typeof quantity !== "number" || Number.isNaN(quantity) || quantity < 0) {
+      if (req.file) deleteImageFile(req.file.filename);
+      return res.status(400).json({ error: "quantity manfiy bo'lmagan son bo'lishi kerak" });
+    }
+    product.quantity = quantity;
+  }
+
+  // Yangi rasm yuklangan bo'lsa, eskisini o'chirib, yangisini o'rnatamiz
+  if (req.file) {
+    deleteImageFile(product.image);
+    product.image = req.file.filename;
+  }
+
+  product.updatedAt = new Date().toISOString();
+
+  res.status(200).json({
+    message: "Product muvaffaqiyatli yangilandi",
+    product: toPublicProduct(product, req),
+  });
+});
+
+// ===== DELETE - Product rasmini o'chirish =====
+app.delete("/products/:id/image", authenticateToken, (req, res) => {
   const id = Number(req.params.id);
 
   const product = products.find((product) => product.id === id);
@@ -409,35 +524,17 @@ app.put("/products/:id", authenticateToken, (req, res) => {
     });
   }
 
-  const { name, price, description, quantity } = req.body;
-
-  if (name !== undefined) {
-    if (typeof name !== "string" || !name) {
-      return res.status(400).json({ error: "name string bo'lishi kerak" });
-    }
-    product.name = name;
+  if (!product.image) {
+    return res.status(400).json({ error: "Productda rasm mavjud emas" });
   }
 
-  if (price !== undefined) {
-    if (typeof price !== "number" || price < 0) {
-      return res.status(400).json({ error: "price manfiy bo'lmagan son bo'lishi kerak" });
-    }
-    product.price = price;
-  }
-
-  if (description !== undefined) product.description = description;
-  if (quantity !== undefined) {
-    if (typeof quantity !== "number" || quantity < 0) {
-      return res.status(400).json({ error: "quantity manfiy bo'lmagan son bo'lishi kerak" });
-    }
-    product.quantity = quantity;
-  }
-
+  deleteImageFile(product.image);
+  product.image = null;
   product.updatedAt = new Date().toISOString();
 
   res.status(200).json({
-    message: "Product muvaffaqiyatli yangilandi",
-    product,
+    message: "Product rasmi o'chirildi",
+    product: toPublicProduct(product, req),
   });
 });
 
@@ -454,11 +551,23 @@ app.delete("/products/:id", authenticateToken, (req, res) => {
   }
 
   const deletedProduct = products.splice(index, 1)[0];
+  deleteImageFile(deletedProduct.image);
 
   res.status(200).json({
     message: "Product muvaffaqiyatli o'chirildi",
-    product: deletedProduct,
+    product: toPublicProduct(deletedProduct, req),
   });
+});
+
+// ===== Multer/fayl yuklash xatolarini ushlash =====
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  next();
 });
 
 // ===== Server =====
