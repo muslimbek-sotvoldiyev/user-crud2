@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// ===== Rasm yuklash sozlamalari (product uchun) =====
+// ===== Rasm yuklash sozlamalari (product va user uchun) =====
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR);
@@ -72,6 +72,11 @@ function toPublicProduct(product, req) {
   };
 }
 
+// ===== Yordamchi: rasm fayl nomidan to'liq URL yasash =====
+function buildImageUrl(image, req) {
+  return image ? `${req.protocol}://${req.get("host")}/uploads/${image}` : null;
+}
+
 // ===== Ma'lumotlar shu yerda saqlanadi (oddiy massiv, database yo'q) =====
 let users = [];
 let nextId = 1;
@@ -117,21 +122,25 @@ function validateRegisterInput(body) {
   return null;
 }
 
-// ===== Yordamchi: userni tashqariga chiqarishdan oldin passwordni olib tashlash =====
-function toPublicUser(user) {
+// ===== Yordamchi: userni tashqariga chiqarishdan oldin passwordni olib tashlash va imageUrl qo'shish =====
+function toPublicUser(user, req) {
   const { passwordHash, ...publicUser } = user;
-  return publicUser;
+  return {
+    ...publicUser,
+    imageUrl: req ? buildImageUrl(user.image, req) : undefined,
+  };
 }
 
 // ==========================================================
 // ===================== AUTH ENDPOINTLARI ===================
 // ==========================================================
 
-// ===== REGISTER - Ro'yxatdan o'tish =====
-app.post("/auth/register", async (req, res) => {
+// ===== REGISTER - Ro'yxatdan o'tish (ixtiyoriy rasm bilan, form-data: image) =====
+app.post("/auth/register", upload.single("image"), async (req, res) => {
   const error = validateRegisterInput(req.body);
 
   if (error) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(400).json({ error });
   }
 
@@ -142,6 +151,7 @@ app.post("/auth/register", async (req, res) => {
   );
 
   if (exists) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(409).json({
       error: "Bu username yoki email allaqachon mavjud",
     });
@@ -155,6 +165,7 @@ app.post("/auth/register", async (req, res) => {
     email,
     name,
     passwordHash,
+    image: req.file ? req.file.filename : null,
     createdAt: new Date().toISOString(),
   };
 
@@ -162,7 +173,7 @@ app.post("/auth/register", async (req, res) => {
 
   res.status(201).json({
     message: "Ro'yxatdan muvaffaqiyatli o'tildi",
-    user: toPublicUser(newUser),
+    user: toPublicUser(newUser, req),
   });
 });
 
@@ -198,7 +209,7 @@ app.post("/auth/login", async (req, res) => {
     message: "Tizimga muvaffaqiyatli kirildi",
     accessToken,
     refreshToken,
-    user: toPublicUser(user),
+    user: toPublicUser(user, req),
   });
 });
 
@@ -262,7 +273,7 @@ app.get("/auth/me", authenticateToken, (req, res) => {
     return res.status(404).json({ error: "User topilmadi" });
   }
 
-  res.status(200).json(toPublicUser(user));
+  res.status(200).json(toPublicUser(user, req));
 });
 
 // ==========================================================
@@ -271,11 +282,12 @@ app.get("/auth/me", authenticateToken, (req, res) => {
 // Quyidagi barcha /users route'lari access token talab qiladi.
 // So'rov headerida: Authorization: Bearer <accessToken>
 
-// ===== CREATE - Yangi user qo'shish =====
-app.post("/users", authenticateToken, (req, res) => {
+// ===== CREATE - Yangi user qo'shish (ixtiyoriy rasm bilan, form-data: image) =====
+app.post("/users", authenticateToken, upload.single("image"), (req, res) => {
   const { username, email, name } = req.body;
 
   if (!username || !email || !name) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(400).json({
       error: "username, email va name majburiy",
     });
@@ -286,6 +298,7 @@ app.post("/users", authenticateToken, (req, res) => {
   );
 
   if (exists) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(409).json({
       error: "Bu username yoki email allaqachon mavjud",
     });
@@ -297,6 +310,7 @@ app.post("/users", authenticateToken, (req, res) => {
     email,
     name,
     passwordHash: null, // parolsiz yaratilgan user, /auth/register orqali kirolmaydi
+    image: req.file ? req.file.filename : null,
     createdAt: new Date().toISOString(),
   };
 
@@ -304,13 +318,13 @@ app.post("/users", authenticateToken, (req, res) => {
 
   res.status(201).json({
     message: "User muvaffaqiyatli qo'shildi",
-    user: toPublicUser(newUser),
+    user: toPublicUser(newUser, req),
   });
 });
 
 // ===== READ - Barcha userlarni olish =====
 app.get("/users", authenticateToken, (req, res) => {
-  res.status(200).json(users.map(toPublicUser));
+  res.status(200).json(users.map((user) => toPublicUser(user, req)));
 });
 
 // ===== READ - Bitta userni olish =====
@@ -325,16 +339,17 @@ app.get("/users/:id", authenticateToken, (req, res) => {
     });
   }
 
-  res.status(200).json(toPublicUser(user));
+  res.status(200).json(toPublicUser(user, req));
 });
 
-// ===== UPDATE - Userni yangilash =====
-app.put("/users/:id", authenticateToken, (req, res) => {
+// ===== UPDATE - Userni yangilash (ixtiyoriy yangi rasm bilan, form-data: image) =====
+app.put("/users/:id", authenticateToken, upload.single("image"), (req, res) => {
   const id = Number(req.params.id);
 
   const user = users.find((user) => user.id === id);
 
   if (!user) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(404).json({
       error: "User topilmadi",
     });
@@ -346,6 +361,7 @@ app.put("/users/:id", authenticateToken, (req, res) => {
     username &&
     users.some((u) => u.username === username && u.id !== id)
   ) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(409).json({
       error: "Bu username band",
     });
@@ -355,6 +371,7 @@ app.put("/users/:id", authenticateToken, (req, res) => {
     email &&
     users.some((u) => u.email === email && u.id !== id)
   ) {
+    if (req.file) deleteImageFile(req.file.filename);
     return res.status(409).json({
       error: "Bu email band",
     });
@@ -364,11 +381,43 @@ app.put("/users/:id", authenticateToken, (req, res) => {
   if (email) user.email = email;
   if (name) user.name = name;
 
+  // Yangi rasm yuklangan bo'lsa, eskisini o'chirib, yangisini o'rnatamiz
+  if (req.file) {
+    deleteImageFile(user.image);
+    user.image = req.file.filename;
+  }
+
   user.updatedAt = new Date().toISOString();
 
   res.status(200).json({
     message: "User muvaffaqiyatli yangilandi",
-    user: toPublicUser(user),
+    user: toPublicUser(user, req),
+  });
+});
+
+// ===== DELETE - User rasmini o'chirish =====
+app.delete("/users/:id/image", authenticateToken, (req, res) => {
+  const id = Number(req.params.id);
+
+  const user = users.find((user) => user.id === id);
+
+  if (!user) {
+    return res.status(404).json({
+      error: "User topilmadi",
+    });
+  }
+
+  if (!user.image) {
+    return res.status(400).json({ error: "Userda rasm mavjud emas" });
+  }
+
+  deleteImageFile(user.image);
+  user.image = null;
+  user.updatedAt = new Date().toISOString();
+
+  res.status(200).json({
+    message: "User rasmi o'chirildi",
+    user: toPublicUser(user, req),
   });
 });
 
@@ -385,13 +434,14 @@ app.delete("/users/:id", authenticateToken, (req, res) => {
   }
 
   const deletedUser = users.splice(index, 1)[0];
+  deleteImageFile(deletedUser.image);
 
   // O'chirilgan userning barcha refresh tokenlarini ham bekor qilamiz
   removeAllRefreshTokens(deletedUser.id);
 
   res.status(200).json({
     message: "User muvaffaqiyatli o'chirildi",
-    user: toPublicUser(deletedUser),
+    user: toPublicUser(deletedUser, req),
   });
 });
 

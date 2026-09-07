@@ -36,13 +36,21 @@ PORT=3000
 
 ## Users endpointlari (himoyalangan — access token talab qiladi)
 
-| Method | URL        | Tavsif                 |
-| ------ | ---------- | ----------------------- |
-| POST   | /users     | Yangi user yaratish     |
-| GET    | /users     | Barcha userlarni olish  |
-| GET    | /users/:id | Bitta userni olish      |
-| PUT    | /users/:id | Userni yangilash        |
-| DELETE | /users/:id | Userni o'chirish        |
+| Method | URL              | Tavsif                 |
+| ------ | ----------------- | ----------------------- |
+| POST   | /users           | Yangi user yaratish     |
+| GET    | /users           | Barcha userlarni olish  |
+| GET    | /users/:id       | Bitta userni olish      |
+| PUT    | /users/:id       | Userni yangilash        |
+| DELETE | /users/:id/image | User rasmini o'chirish  |
+| DELETE | /users/:id       | Userni o'chirish        |
+
+User maydonlari: `username` (majburiy), `email` (majburiy), `name` (majburiy), `image` (ixtiyoriy, rasm fayl).
+
+- `POST /users`, `PUT /users/:id` va `POST /auth/register` endpointlari `multipart/form-data` so'rovlarini ham qabul qiladi — `image` maydoniga rasm fayl (jpeg, png, gif yoki webp, maksimal 5MB) biriktirish mumkin.
+- Yuklangan rasmlar `uploads/` papkasida saqlanadi va `/uploads/<fayl-nomi>` orqali ochiladi. Har bir user javobida to'liq `imageUrl` qaytariladi (rasm bo'lmasa `null`).
+- `DELETE /users/:id/image` — faqat userning rasmini o'chiradi (userning o'zi qoladi).
+- User o'chirilganda (`DELETE /users/:id`), unga tegishli rasm fayli ham diskdan o'chiriladi.
 
 ## Products endpointlari (himoyalangan — access token talab qiladi)
 
@@ -138,6 +146,32 @@ curl -X PUT http://localhost:3000/users/1 \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <accessToken>" \
   -d '{"name":"Aziz Yangi"}'
+```
+
+### Yangi user qo'shish (rasm bilan)
+
+```bash
+curl -X POST http://localhost:3000/users \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "username=vali02" \
+  -F "email=vali@example.com" \
+  -F "name=Vali Toshmatov" \
+  -F "image=@/path/to/rasm.jpg"
+```
+
+### User rasmini yangilash
+
+```bash
+curl -X PUT http://localhost:3000/users/1 \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "image=@/path/to/yangi-rasm.jpg"
+```
+
+### User rasmini o'chirish
+
+```bash
+curl -X DELETE http://localhost:3000/users/1/image \
+  -H "Authorization: Bearer <accessToken>"
 ```
 
 ### Userni o'chirish
